@@ -1,0 +1,74 @@
+---
+- name: Installation et Déploiement de Todolist
+  hosts: all
+  become: yes  # On passe root pour les installation
+  vars:
+    # Variables par défaut (surchargées par Jenkins si besoin)
+    project_path: /opt/todolist
+    repo_url: https://github.com/gaeldb/to-do-list.git
+    # La version sera passée par Jenkins (Ex 6), sinon "main" par défaut
+    git_version: "{{ version_git | default('main') }}"
+
+  tasks:
+    - name: 1. Installation des paquets système requis
+      apt:
+        name:
+          - git
+          - python3
+          - python3-pip
+          - python3-venv
+          - acl # Utile pour qu'Ansible gère les droits
+        state: present
+        update_cache: yes
+
+    - name: 2. Récupération du code source (Git)
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ project_path }}"
+        version: "{{ git_version }}"
+        force: yes # Force la mise à jour si le dossier existe déjà
+
+    - name: 3. Création de l'environnement virtuel Python (venv)
+      command: python3 -m venv venv
+      args:
+        chdir: "{{ project_path }}"
+        creates: "{{ project_path }}/venv" # Ne le fait que si le dossier n'existe pas
+
+    - name: 4. Installation des dépendances Python (Django & Gunicorn)
+      pip:
+        name:
+          - django
+          - gunicorn
+        virtualenv: "{{ project_path }}/venv"
+
+    - name: 5. Application des migrations de base de données
+      command: "{{ project_path }}/venv/bin/python manage.py migrate"
+      args:
+        chdir: "{{ project_path }}"
+
+    - name: 6. Configuration du service Systemd
+      copy:
+        dest: /etc/systemd/system/todolist.service
+        content: |
+          [Unit]
+          Description=Serveur Gunicorn pour Todolist
+          After=network.target
+
+          [Service]
+          User=root
+          WorkingDirectory={{ project_path }}
+          # On lance Gunicorn sur le port 80 pour que ce soit accessible directement
+          ExecStart={{ project_path }}/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:80 todolist.wsgi:application
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Redémarrer Todolist
+
+  handlers:
+    - name: Redémarrer Todolist
+      systemd:
+        name: todolist
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
