@@ -1,11 +1,18 @@
-my_infra:
-  hosts:
-    app-dev:
-      ansible_host: 192.168.56.10
-      env: dev
-    app-prod1:
-      ansible_host: 192.168.56.11
-      env: prod
-  vars:
-    ansible_user: admin
-    ansible_ssh_private_key_file: id-rda-infra.key
+all:
+  children:
+    test:
+      hosts:
+        192.168.56.10:
+          ansible_user: admin
+
+    prod:
+      hosts:
+        192.168.56.11:
+          ansible_user: admin
+        192.168.56.12:
+          ansible_user: admin
+
+    loadbalancer:
+      hosts:
+        192.168.56.30:
+          ansible_user: admin
