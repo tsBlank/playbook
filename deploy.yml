@@ -1,30 +1,50 @@
 - name: Deploy todolist app
-  hosts: my_infra
+  
+  hosts: "{{ target | default('test') }}"
+  serial: 1 
   become: true
 
   vars:
     app_dir: /opt/todolist
 
+    git_version: "{{ app_version | default('main') }}"
+
   tasks:
+    # ============================================================
+    # ÉTAPE A : (PROD UNIQUEMENT) SORTIR DU LOAD BALANCER
+    # ============================================================
+    - name: Disable server in HAProxy (Production only)
+      community.general.haproxy:
+        state: disabled
+        host: "{{ inventory_hostname }}"
+        backend: http_back
+        socket: /var/run/haproxy.sock
+      # On envoie cette commande à la VM lb-prod, pas à la VM de l'app
+      delegate_to: lb-prod
+      # On ne le fait que si on est en train de déployer la prod
+      when: "'prod' in group_names"
+
+    # ============================================================
+    # ÉTAPE B : MISE À JOUR CLASSIQUE (TES TÂCHES)
+    # ============================================================
     - name: Install system dependencies
       apt:
-        name:
-          - python3
-          - python3-pip
-          - python3-venv
-          - git
+        name: [python3, python3-pip, python3-venv, git]
         update_cache: yes
 
     - name: Clone todolist repository
       git:
         repo: https://github.com/gaeldb/to-do-list.git
         dest: "{{ app_dir }}"
-        version: main
+        # Utilisation de la version (branche ou tag) choisie
+        version: "{{ git_version }}"
+      register: git_result
 
     - name: Create virtualenv
       command: python3 -m venv venv
       args:
         chdir: "{{ app_dir }}"
+        creates: "{{ app_dir }}/venv"
 
     - name: Install python requirements
       pip:
@@ -40,7 +60,7 @@
       lineinfile:
         path: "{{ app_dir }}/todolist/settings.py"
         regexp: '^DEBUG ='
-        line: "DEBUG = {{ env == 'dev' }}"
+        line: "DEBUG = {{ 'False' if 'prod' in group_names else 'True' }}"
     
     - name: Create systemd service
       copy:
@@ -59,13 +79,33 @@
           [Install]
           WantedBy=multi-user.target
 
-    - name: Enable and start service
+    - name: Restart application
       systemd:
         name: todolist
+        daemon_reload: yes
         enabled: true
-        state: started
+        state: restarted 
 
-    - name: Check application availability
+    # ============================================================
+    # ÉTAPE C : VÉRIFICATION AVANT DE REMETTRE DANS LE LB
+    # ============================================================
+    - name: Check application availability (Healthcheck)
       uri:
-        url: "http://{{ ansible_host }}:8000"
+        url: "http://localhost:8000"
         status_code: 200
+      register: healthcheck
+      until: healthcheck.status == 200
+      retries: 5
+      delay: 5
+
+    # ============================================================
+    # ÉTAPE D : (PROD UNIQUEMENT) RÉACTIVER DANS LE LB
+    # ============================================================
+    - name: Enable server in HAProxy (Production only)
+      community.general.haproxy:
+        state: enabled
+        host: "{{ inventory_hostname }}"
+        backend: http_back
+        socket: /var/run/haproxy.sock
+      delegate_to: lb-prod
+      when: "'prod' in group_names"
