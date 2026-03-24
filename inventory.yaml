@@ -1,18 +1,12 @@
 all:
   children:
-    test:
-      hosts:
-        192.168.56.10:
-          ansible_user: admin
-
     prod:
       hosts:
-        192.168.56.11:
-          ansible_user: admin
-        192.168.56.12:
-          ansible_user: admin
-
+        app-prod1:
+          ansible_host: 192.168.56.11
+        app-prod2:
+          ansible_host: 192.168.56.12
     loadbalancer:
       hosts:
-        192.168.56.30:
-          ansible_user: admin
+        lb-prod:
+          ansible_host: 192.168.56.20
